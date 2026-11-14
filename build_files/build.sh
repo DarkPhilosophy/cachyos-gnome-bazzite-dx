@@ -75,7 +75,9 @@ cd -
 # Regen initramfs
 releasever=$(/usr/bin/rpm -E %fedora)
 basearch=$(/usr/bin/arch)
-KERNEL_VERSION=$(dnf list kernel-cachyos -q | awk '/kernel-cachyos/ {print $2}' | head -n 1 | cut -d'-' -f1)-cachyos1.fc${releasever}.${basearch}
+# The kernel modules dir name is the installed kernel version; it must be the only one
+KERNEL_VERSION=$(ls /usr/lib/modules)
+[ "$(echo "$KERNEL_VERSION" | wc -l)" -eq 1 ] || { echo "Expected exactly one kernel in /usr/lib/modules, got: $KERNEL_VERSION" >&2; exit 1; }
 # Ensure Initramfs is generated
 depmod -a ${KERNEL_VERSION}
 export DRACUT_NO_XATTR=1
@@ -83,7 +85,7 @@ export DRACUT_NO_XATTR=1
 chmod 0600 "/lib/modules/${KERNEL_VERSION}/initramfs.img"
 
 # Remove steam
-dnf5 -y remove steam
+if rpm -q steam > /dev/null 2>&1; then dnf5 -y remove steam; fi
 
 ## Packages that were layered with rpm-ostree on the host
 # Repos (exact copies of the ones configured on the host)
