@@ -99,7 +99,7 @@ dnf5 -y install \
     dovecot postfix opendkim opendkim-tools mailx \
     earlyoom irqbalance preload powertop kdump-utils kexec-tools seatd \
     udisks2-btrfs udisks2-iscsi udisks2-lvm2 \
-    direnv gh google-cloud-cli himalaya meson mock neovim nodejs rpm-build \
+    direnv gh google-cloud-cli himalaya meson mock neovim rpm-build \
     trash-cli xclip fuse-sshfs sshfs Sunshine \
     libgamemode.so.0 libgamemodeauto.so.0
 
