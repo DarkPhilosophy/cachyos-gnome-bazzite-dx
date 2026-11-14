@@ -4,13 +4,28 @@ on:
   pull_request:
     branches:
       - main
+    # Only rebuild when something that ends up in the image changed
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - 'artifacthub-repo.yml'
+      - '.github/dependabot.yml'
+      - '.github/renovate.json5'
+      - '.github/workflows/dependabot-automerge.yml'
   schedule:
-    - cron: '05 10 * * *'  # 10:05am UTC everyday
+    # Weekly (Monday 04:17 UTC, off the :00/:05 rush). The check job below skips the
+    # build when neither the base image nor the CachyOS packages changed.
+    - cron: '17 4 * * 1'
   push:
     branches:
       - main
     paths-ignore:
-      - '**/README.md'
+      - '**/*.md'
+      - 'LICENSE'
+      - 'artifacthub-repo.yml'
+      - '.github/dependabot.yml'
+      - '.github/renovate.json5'
+      - '.github/workflows/dependabot-automerge.yml'
   workflow_dispatch:
 
 env:
@@ -21,14 +36,65 @@ env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
   DEFAULT_TAG: "latest"
 
+# A newer run on the same ref supersedes an older one instead of burning minutes twice
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}-${{ inputs.brand_name}}-${{ inputs.stream_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # ~15 s job that decides if a scheduled build is worth ~10 min and several GB of pulls
+  check:
+    name: Check for upstream changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      fingerprint: ${{ steps.fp.outputs.fingerprint }}
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - name: Fingerprint build inputs
+        id: fp
+        run: |
+          set -euo pipefail
+          base=$(skopeo inspect --no-tags docker://ghcr.io/ublue-os/bazzite-dx-gnome:stable | jq -r .Digest)
+          copr() {
+            curl -fsS "https://copr.fedorainfracloud.org/api_3/package/?ownername=bieszczaders&projectname=$1&packagename=$2&with_latest_succeeded_build=true" \
+              | jq -er .builds.latest_succeeded.id
+          }
+          kernel=$(copr kernel-cachyos kernel-cachyos)
+          settings=$(copr kernel-cachyos-addons cachyos-settings)
+          fp=$(printf '%s\n' "$base" "$kernel" "$settings" | sha256sum | cut -c1-32)
+          echo "base=$base kernel-build=$kernel settings-build=$settings fingerprint=$fp"
+          echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
+
+      - name: Decide
+        id: decide
+        env:
+          FP: ${{ steps.fp.outputs.fingerprint }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "schedule" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"; echo "Event $EVENT: always build"; exit 0
+          fi
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}:latest"
+          prev=$(skopeo inspect --no-tags --creds "$GITHUB_ACTOR:${{ github.token }}" "docker://$repo" 2>/dev/null \
+                 | jq -r '.Labels["io.darkphilosophy.build-inputs"] // ""' || true)
+          echo "previous=$prev current=$FP"
+          if [ "$prev" = "$FP" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"; echo "Inputs unchanged: skipping build"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build_push:
     name: Build and push image
+    needs: check
+    if: needs.check.outputs.build == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
 
     permissions:
       contents: read
@@ -101,6 +167,7 @@ jobs:
             io.artifacthub.package.logo-url=${{ env.IMAGE_LOGO_URL }}
             io.artifacthub.package.prerelease=false
             containers.bootc=1
+            io.darkphilosophy.build-inputs=${{ needs.check.outputs.fingerprint }}
           sep-tags: " "
           sep-annotations: " "
 
@@ -178,11 +245,29 @@ jobs:
       - name: Sign container image
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         run: |
+          # One signature on the digest covers every tag; signing each tag re-signs the same manifest
           IMAGE_FULL="${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}"
-          for tag in ${{ steps.metadata.outputs.tags }}; do
-            cosign sign -y --key env://COSIGN_PRIVATE_KEY $IMAGE_FULL:$tag
-          done
+          [ -n "$DIGEST" ] || { echo "push step returned no digest" >&2; exit 1; }
+          cosign sign -y --key env://COSIGN_PRIVATE_KEY "$IMAGE_FULL@$DIGEST"
         env:
-          TAGS: ${{ steps.push.outputs.digest }}
+          DIGEST: ${{ steps.push.outputs.digest }}
           COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+
+  # Keeps the registry small: drops untagged leftovers of earlier builds.
+  # Tagged versions (images and their .sig signatures) are never touched.
+  cleanup:
+    name: Prune old untagged image versions
+    needs: build_push
+    if: needs.build_push.result == 'success' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/delete-package-versions@25ad4af5be03aef10e0b3376b248688b7a44c40b # v5.0.0
+        with:
+          package-name: ${{ github.event.repository.name }}
+          package-type: container
+          min-versions-to-keep: 10
+          delete-only-untagged-versions: true
