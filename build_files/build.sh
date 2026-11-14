@@ -83,7 +83,36 @@ dnf5 -y install \
     earlyoom irqbalance preload powertop kdump-utils kexec-tools seatd \
     udisks2-btrfs udisks2-iscsi udisks2-lvm2 \
     direnv gh google-cloud-cli himalaya meson mock neovim nodejs rpm-build \
-    trash-cli xclip fuse-sshfs sshfs Sunshine
+    trash-cli xclip fuse-sshfs sshfs Sunshine \
+    libgamemode.so.0 libgamemodeauto.so.0
+
+## Dev toolchain and headers (previously only in distrobox containers)
+dnf5 -y install \
+    autoconf automake libtool cmake cargo clang clang-tools-extra lld llvm vala \
+    glibc-static libstdc++-static libxcrypt-static check check-devel check-static \
+    alsa-lib-devel appstream-devel at-spi2-atk-devel at-spi2-core-devel atk-devel \
+    brotli-devel bzip2-devel cairo-devel cairo-gobject-devel clang-devel dbus-devel \
+    fontconfig-devel freetype-devel fribidi-devel fuse3-devel gdk-pixbuf2-devel \
+    gettext-devel glib2-devel glycin-devel gnome-desktop4-devel \
+    gobject-introspection-devel graphene-devel graphite2-devel \
+    gsettings-desktop-schemas-devel gstreamer1-devel gstreamer1-plugins-base-devel \
+    gtk3-devel gtk4-devel harfbuzz-devel iso-codes-devel javascriptcoregtk4.1-devel \
+    javascriptcoregtk6.0-devel keyutils-libs-devel krb5-devel lcms2-devel \
+    libX11-devel libXau-devel libXcomposite-devel libXcursor-devel libXdamage-devel \
+    libXext-devel libXfixes-devel libXft-devel libXi-devel libXinerama-devel \
+    libXrandr-devel libXrender-devel libXtst-devel libadwaita-devel libblkid-devel \
+    libcloudproviders-devel libcom_err-devel libdatrie-devel libdrm-devel \
+    libedit-devel libei-devel libepoxy-devel libffi-devel libglvnd-core-devel \
+    libglvnd-devel libgudev-devel libicu-devel libinput-devel libmount-devel \
+    libnghttp2-devel libogg-devel libomp-devel libpciaccess-devel libpsl-devel \
+    libseccomp-devel libselinux-devel libsepol-devel libsoup3-devel libthai-devel \
+    libverto-devel libxcb-devel libxdo-devel libxkbcommon-devel libxml2-devel \
+    llvm-devel lzo-devel mesa-libEGL-devel mesa-libGL-devel mesa-libgbm-devel \
+    ncurses-devel openssl-devel-engine opus-devel orc-devel pango-devel pcre2-devel \
+    pipewire-devel pixman-devel pulseaudio-libs-devel sqlite-devel subunit-devel \
+    sysprof-capture-devel systemd-devel vulkan-headers vulkan-loader-devel \
+    wayland-devel wayland-protocols-devel webkit2gtk4.1-devel webkitgtk6.0-devel \
+    xdg-desktop-portal-devel xkeyboard-config-devel xorg-x11-proto-devel xz-devel
 
 # Packages removed from the base on the host
 for p in lutris fw-fanctrl; do
