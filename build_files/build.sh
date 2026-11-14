@@ -34,7 +34,20 @@ rm -rf /usr/lib/systemd/coredump.conf
 
 ## Install KSMD and CachyOS-Settings
 dnf5 -y install libcap-ng libcap-ng-devel procps-ng procps-ng-devel
+# F45: systemd-oomd-defaults owns the same files as cachyos-settings
+rpm -q systemd-oomd-defaults > /dev/null 2>&1 && rpm -e --nodeps systemd-oomd-defaults
 dnf5 -y install cachyos-settings cachyos-ksm-settings --allowerasing
+
+## Trust this image's own cosign signature (client verifies with ostree-image-signed)
+install -Dm0644 /ctx/keys/cosign.pub /etc/pki/containers/darkphilosophy.pub
+tee /etc/containers/registries.d/darkphilosophy.yaml > /dev/null <<EOF
+docker:
+  ghcr.io/darkphilosophy:
+    use-sigstore-attachments: true
+EOF
+jq '.transports.docker["ghcr.io/darkphilosophy"] = [{"type":"sigstoreSigned","keyPaths":["/etc/pki/containers/darkphilosophy.pub"],"signedIdentity":{"type":"matchRepository"}}]' \
+    /etc/containers/policy.json > /tmp/policy.json
+install -m0644 /tmp/policy.json /etc/containers/policy.json
 
 ## Enable KSMD
 tee "/usr/lib/systemd/system/ksmd.service" > /dev/null <<EOF
