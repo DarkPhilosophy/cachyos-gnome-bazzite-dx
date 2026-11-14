@@ -56,6 +56,8 @@ jobs:
     steps:
       - name: Fingerprint build inputs
         id: fp
+        # Fail open: if Copr/ghcr is unreachable, fingerprint stays empty and Decide builds anyway
+        continue-on-error: true
         run: |
           set -euo pipefail
           base=$(skopeo inspect --no-tags docker://ghcr.io/ublue-os/bazzite-dx-gnome:stable | jq -r .Digest)
@@ -76,8 +78,8 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" != "schedule" ]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"; echo "Event $EVENT: always build"; exit 0
+          if [ "$EVENT" != "schedule" ] || [ -z "$FP" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"; echo "Event=$EVENT fingerprint='${FP}': building"; exit 0
           fi
           repo="ghcr.io/${GITHUB_REPOSITORY,,}:latest"
           info=$(skopeo inspect --no-tags --creds "$GITHUB_ACTOR:${{ github.token }}" "docker://$repo" 2>/dev/null || true)

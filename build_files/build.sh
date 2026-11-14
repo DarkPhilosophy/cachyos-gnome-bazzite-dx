@@ -94,12 +94,19 @@ cp /ctx/gpg/* /etc/pki/rpm-gpg/
 
 dnf5 -y install \
     caddy certbot crowdsec crowdsec-firewall-bouncer-nftables fail2ban \
-    dovecot postfix opendkim opendkim-tools netbird netbird-ui mailx \
+    dovecot postfix opendkim opendkim-tools mailx \
     earlyoom irqbalance preload powertop kdump-utils kexec-tools seatd \
     udisks2-btrfs udisks2-iscsi udisks2-lvm2 \
     direnv gh google-cloud-cli himalaya meson mock neovim nodejs rpm-build \
     trash-cli xclip fuse-sshfs sshfs Sunshine \
     libgamemode.so.0 libgamemodeauto.so.0
+
+# NetBird's %post runs `netbird service install/start`, which cannot work inside a build.
+# Skip its scriptlets and ship the same unit the installer generates.
+dnf5 -y install --setopt=tsflags=noscripts netbird netbird-ui
+chmod 0600 /etc/sysconfig/netbird
+install -Dm0644 /ctx/units/netbird.service /usr/lib/systemd/system/netbird.service
+ln -sf /usr/lib/systemd/system/netbird.service /etc/systemd/system/multi-user.target.wants/netbird.service
 
 ## Dev toolchain and headers (previously only in distrobox containers)
 dnf5 -y install \
