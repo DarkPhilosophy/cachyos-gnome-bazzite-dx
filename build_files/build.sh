@@ -54,10 +54,6 @@ EOF
 
 ln -s /usr/lib/systemd/system/ksmd.service /etc/systemd/system/multi-user.target.wants/ksmd.service
 
-# Install the Kwin better blur packages
-dnf5 -y copr enable infinality/kwin-effects-better-blur-dx
-dnf5 -y install kwin-effects-better-blur-dx
-
 # restore kernel install
 mv -f 05-rpmostree.install.bak 05-rpmostree.install \
 && mv -f 50-dracut.install.bak 50-dracut.install
