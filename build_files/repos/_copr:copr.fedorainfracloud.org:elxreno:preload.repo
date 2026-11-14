@@ -1,0 +1,10 @@
+[copr:copr.fedorainfracloud.org:elxreno:preload]
+name=Copr repo for preload owned by elxreno
+baseurl=https://download.copr.fedorainfracloud.org/results/elxreno/preload/fedora-$releasever-$basearch/
+type=rpm-md
+skip_if_unavailable=True
+gpgcheck=1
+gpgkey=https://download.copr.fedorainfracloud.org/results/elxreno/preload/pubkey.gpg
+repo_gpgcheck=0
+enabled=1
+enabled_metadata=1

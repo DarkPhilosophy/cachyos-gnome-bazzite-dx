@@ -1,0 +1,44 @@
+
+# Source: Caddy
+# Site: https://github.com/caddyserver/caddy
+# Repository: Caddy / stable
+# Description: Fast, multi-platform web server with automatic HTTPS
+
+[caddy-stable]
+name=caddy-stable
+baseurl=https://dl.cloudsmith.io/public/caddy/stable/rpm/fedora/40/$basearch
+repo_gpgcheck=1
+enabled=0
+skip_if_unavailable=1
+gpgkey=https://dl.cloudsmith.io/public/caddy/stable/gpg.155B6D79CA56EA34.key
+gpgcheck=1
+sslverify=1
+sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+metadata_expire=300
+type=rpm-md
+
+[caddy-stable-noarch]
+name=caddy-stable-noarch
+baseurl=https://dl.cloudsmith.io/public/caddy/stable/rpm/fedora/40/noarch
+repo_gpgcheck=1
+enabled=0
+skip_if_unavailable=1
+gpgkey=https://dl.cloudsmith.io/public/caddy/stable/gpg.155B6D79CA56EA34.key
+gpgcheck=1
+sslverify=1
+sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+metadata_expire=300
+type=rpm-md
+
+[caddy-stable-source]
+name=caddy-stable-source
+baseurl=https://dl.cloudsmith.io/public/caddy/stable/rpm/fedora/40/SRPMS
+repo_gpgcheck=1
+enabled=0
+skip_if_unavailable=1
+gpgkey=https://dl.cloudsmith.io/public/caddy/stable/gpg.155B6D79CA56EA34.key
+gpgcheck=1
+sslverify=1
+sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+metadata_expire=300
+type=rpm-md

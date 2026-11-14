@@ -72,6 +72,24 @@ chmod 0600 "/lib/modules/${KERNEL_VERSION}/initramfs.img"
 # Remove steam
 dnf5 -y remove steam
 
+## Packages that were layered with rpm-ostree on the host
+# Repos (exact copies of the ones configured on the host)
+cp /ctx/repos/*.repo /etc/yum.repos.d/
+cp /ctx/gpg/* /etc/pki/rpm-gpg/
+
+dnf5 -y install \
+    caddy certbot crowdsec crowdsec-firewall-bouncer-nftables fail2ban \
+    dovecot postfix opendkim opendkim-tools netbird netbird-ui mailx \
+    earlyoom irqbalance preload powertop kdump-utils kexec-tools seatd \
+    udisks2-btrfs udisks2-iscsi udisks2-lvm2 \
+    direnv gh google-cloud-cli himalaya meson mock neovim nodejs rpm-build \
+    trash-cli xclip fuse-sshfs sshfs Sunshine
+
+# Packages removed from the base on the host
+for p in lutris fw-fanctrl; do
+    if rpm -q "$p" > /dev/null 2>&1; then dnf5 -y remove "$p"; fi
+done
+
 ## CLEAN UP
 # Clean up dnf cache to reduce image size
 dnf5 -y clean all
