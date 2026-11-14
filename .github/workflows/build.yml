@@ -80,11 +80,16 @@ jobs:
             echo "build=true" >> "$GITHUB_OUTPUT"; echo "Event $EVENT: always build"; exit 0
           fi
           repo="ghcr.io/${GITHUB_REPOSITORY,,}:latest"
-          prev=$(skopeo inspect --no-tags --creds "$GITHUB_ACTOR:${{ github.token }}" "docker://$repo" 2>/dev/null \
-                 | jq -r '.Labels["io.darkphilosophy.build-inputs"] // ""' || true)
-          echo "previous=$prev current=$FP"
-          if [ "$prev" = "$FP" ]; then
-            echo "build=false" >> "$GITHUB_OUTPUT"; echo "Inputs unchanged: skipping build"
+          info=$(skopeo inspect --no-tags --creds "$GITHUB_ACTOR:${{ github.token }}" "docker://$repo" 2>/dev/null || true)
+          prev=$(jq -r '.Labels["io.darkphilosophy.build-inputs"] // ""' <<<"${info:-{\}}")
+          created=$(jq -r '.Created // ""' <<<"${info:-{\}}")
+          age_days=9999
+          [ -n "$created" ] && age_days=$(( ( $(date +%s) - $(date -d "$created" +%s) ) / 86400 ))
+          echo "previous=$prev current=$FP image-age-days=$age_days"
+          # Third-party repos (crowdsec, netbird, google-cloud, Sunshine, ...) are not fingerprinted,
+          # so never let the image get older than 14 days.
+          if [ "$prev" = "$FP" ] && [ "$age_days" -lt 14 ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"; echo "Inputs unchanged and image is ${age_days}d old: skipping build"
           else
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
