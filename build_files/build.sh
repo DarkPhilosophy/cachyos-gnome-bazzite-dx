@@ -84,8 +84,10 @@ export DRACUT_NO_XATTR=1
 /usr/bin/dracut --no-hostonly --kver "${KERNEL_VERSION}" --reproducible -v --add ostree -f "/lib/modules/${KERNEL_VERSION}/initramfs.img"
 chmod 0600 "/lib/modules/${KERNEL_VERSION}/initramfs.img"
 
-# Remove steam
-if rpm -q steam > /dev/null 2>&1; then dnf5 -y remove steam; fi
+# Remove steam (Flatpak instead) and tailscale (replaced by NetBird)
+for p in steam tailscale; do
+    if rpm -q "$p" > /dev/null 2>&1; then dnf5 -y remove "$p"; fi
+done
 
 ## Packages that were layered with rpm-ostree on the host
 # Repos (exact copies of the ones configured on the host)
@@ -117,7 +119,7 @@ dnf5 -y install \
     fontconfig-devel freetype-devel fribidi-devel fuse3-devel gdk-pixbuf2-devel \
     gettext-devel glib2-devel glycin-devel gnome-desktop4-devel \
     gobject-introspection-devel graphene-devel graphite2-devel \
-    gsettings-desktop-schemas-devel gstreamer1-devel gstreamer1-plugins-base-devel \
+    gsettings-desktop-schemas-devel gstreamer1-devel \
     gtk3-devel gtk4-devel harfbuzz-devel iso-codes-devel javascriptcoregtk4.1-devel \
     javascriptcoregtk6.0-devel keyutils-libs-devel krb5-devel lcms2-devel \
     libX11-devel libXau-devel libXcomposite-devel libXcursor-devel libXdamage-devel \
@@ -129,12 +131,17 @@ dnf5 -y install \
     libnghttp2-devel libogg-devel libomp-devel libpciaccess-devel libpsl-devel \
     libseccomp-devel libselinux-devel libsepol-devel libsoup3-devel libthai-devel \
     libverto-devel libxcb-devel libxdo-devel libxkbcommon-devel libxml2-devel \
-    llvm-devel lzo-devel mesa-libEGL-devel mesa-libGL-devel mesa-libgbm-devel \
-    ncurses-devel openssl-devel-engine opus-devel orc-devel pango-devel pcre2-devel \
+    llvm-devel lzo-devel \
+    ncurses-devel openssl-devel opus-devel orc-devel pango-devel pcre2-devel \
     pipewire-devel pixman-devel pulseaudio-libs-devel sqlite-devel subunit-devel \
     sysprof-capture-devel systemd-devel vulkan-headers vulkan-loader-devel \
     wayland-devel wayland-protocols-devel webkit2gtk4.1-devel webkitgtk6.0-devel \
     xdg-desktop-portal-devel xkeyboard-config-devel xorg-x11-proto-devel xz-devel
+
+# GL/EGL/GBM headers: the base ships Terra's mesa and excludes Fedora's, so Fedora's
+# -devel packages can be unsatisfiable. Best effort, visible in the log if skipped.
+dnf5 -y install mesa-libGL-devel mesa-libEGL-devel mesa-libgbm-devel gstreamer1-plugins-base-devel \
+    || echo "WARNING: GL/EGL/GBM/gstreamer-plugins-base headers not installed (mesa provider conflict)"
 
 # Packages removed from the base on the host
 for p in lutris fw-fanctrl; do
