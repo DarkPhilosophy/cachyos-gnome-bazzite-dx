@@ -33,17 +33,6 @@ env:
   IMAGE_LOGO_URL: "https://avatars.githubusercontent.com/u/120078124?s=200&v=4"  # Put your own image here for a fancy profile on https://artifacthub.io/!
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
   DEFAULT_TAG: "latest"
-  # Every image this repo publishes, built in parallel by the `build` job below.
-  #   flavor: passed to the Containerfile as TARGET_FLAVOR, picks the per-flavor steps in build.sh
-  #   image:  GHCR package name; each variant owns its package, tags and signature
-  #   base:   upstream image the variant rebases into the CachyOS kernel
-  #   desc:   org.opencontainers.image.description
-  # Adding a variant is adding one entry here: nothing else in this workflow is per-image.
-  VARIANTS: |
-    [
-      {"flavor":"dx","image":"cachyos-gnome-bazzite-dx","base":"ghcr.io/ublue-os/bazzite-dx-gnome:stable","desc":"Bazzite-DX (GNOME) with the CachyOS kernel, settings and ksmd"},
-      {"flavor":"deck","image":"cachyos-gnome-bazzite-deck","base":"ghcr.io/ublue-os/bazzite-deck-gnome:stable","desc":"Bazzite-Deck + DX toolchain (GNOME) with the CachyOS kernel, settings and ksmd"}
-    ]
 
 # A newer run on the same ref supersedes an older one instead of burning minutes twice
 concurrency:
@@ -65,12 +54,23 @@ jobs:
       # JSON array of every variant's image name, consumed by `cleanup`
       images: ${{ steps.decide.outputs.images }}
     steps:
+      - name: Checkout configuration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Validate shared variant configuration
+        run: python3 scripts/validate_builds.py
+
+      - name: Load image variants
+        id: variants
+        run: |
+          echo "json=$(jq -c . config/variants.json)" >> "$GITHUB_OUTPUT"
+
       - name: Fingerprint build inputs per variant
         id: fp
         # Fail open: if Copr/ghcr is unreachable the file is missing and Decide builds everything
         continue-on-error: true
         env:
-          VARIANTS: ${{ env.VARIANTS }}
+          VARIANTS: ${{ steps.variants.outputs.json }}
         run: |
           set -euo pipefail
           copr() {
@@ -95,7 +95,7 @@ jobs:
       - name: Decide which variants to build
         id: decide
         env:
-          VARIANTS: ${{ env.VARIANTS }}
+          VARIANTS: ${{ steps.variants.outputs.json }}
           EVENT: ${{ github.event_name }}
           OWNER: ${{ github.repository_owner }}
           TOKEN: ${{ github.token }}
