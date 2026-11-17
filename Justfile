@@ -1,7 +1,7 @@
 export image_name := env("IMAGE_NAME", "cachyos-gnome-bazzite-dx") # output image name, usually same as repo name, change as needed
 export default_tag := env("DEFAULT_TAG", "latest")
 export bib_image := env("BIB_IMAGE", "quay.io/centos-bootc/bootc-image-builder:latest")
-export base_image := env("BASE_IMAGE", "ghcr.io/ublue-os/bazzite-dx-gnome:stable") # base this build rebases (deck: ghcr.io/ublue-os/bazzite-deck-gnome:stable)
+export base_image := env("BASE_IMAGE", "ghcr.io/ublue-os/bazzite-deck-gnome:stable") # single upstream for BOTH flavors
 export target_flavor := env("TARGET_FLAVOR", "dx") # dx (desktop) or deck (handheld / Game Mode)
 
 alias build-vm := build-qcow2
@@ -96,13 +96,36 @@ build $target_image=image_name $tag=default_tag:
         BUILD_ARGS+=("--build-arg" "SHA_HEAD_SHORT=$(git rev-parse --short HEAD)")
     fi
 
+    # Both variants derive from exactly the same local common image.
+    # For two products in one invocation use: just build-all
+    podman build \
+        --build-arg "BASE_IMAGE={{ base_image }}" \
+        --pull=newer \
+        -f Containerfile.common \
+        --tag localhost/cachyos-bazzite-common:build \
+        .
     podman build \
         "${BUILD_ARGS[@]}" \
-        --build-arg "BASE_IMAGE={{ base_image }}" \
+        --build-arg "COMMON_IMAGE=localhost/cachyos-bazzite-common:build" \
         --build-arg "TARGET_FLAVOR={{ target_flavor }}" \
-        --pull=newer \
+        --pull=never \
+        -f Containerfile \
         --tag "${target_image}:${tag}" \
         .
+
+# One local common build followed by both thin finals, no duplicate CachyOS install.
+build-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build --pull=newer --build-arg "BASE_IMAGE={{ base_image }}" \
+        -f Containerfile.common -t localhost/cachyos-bazzite-common:build .
+    for flavor in dx deck; do
+        podman build --pull=never \
+          --build-arg COMMON_IMAGE=localhost/cachyos-bazzite-common:build \
+          --build-arg "TARGET_FLAVOR=${flavor}" \
+          -f Containerfile \
+          -t "localhost/cachyos-gnome-bazzite-${flavor}:{{ default_tag }}" .
+    done
 
 # Command: _rootful_load_image
 # Description: This script checks if the current user is root or running under sudo. If not, it attempts to resolve the image tag using podman inspect.
