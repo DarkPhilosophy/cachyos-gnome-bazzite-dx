@@ -2,13 +2,13 @@
   {
     "flavor": "dx",
     "image": "cachyos-gnome-bazzite-dx",
-    "base": "ghcr.io/ublue-os/bazzite-dx-gnome:stable",
-    "desc": "Bazzite-DX (GNOME) with the CachyOS kernel, settings and ksmd"
+    "base": "ghcr.io/ublue-os/bazzite-deck-gnome:stable",
+    "desc": "Bazzite DX GNOME with CachyOS, derived from one shared Deck + DX build"
   },
   {
     "flavor": "deck",
     "image": "cachyos-gnome-bazzite-deck",
     "base": "ghcr.io/ublue-os/bazzite-deck-gnome:stable",
-    "desc": "Bazzite-Deck + DX toolchain (GNOME) with the CachyOS kernel, settings and ksmd"
+    "desc": "Bazzite Deck GNOME with DX toolchain and CachyOS, retaining Game Mode"
   }
 ]
