@@ -29,8 +29,9 @@ def validate():
         assert config.is_file(), f"Missing builder config: {config}"
         parsed = tomllib.loads(config.read_text())
         assert "customizations" in parsed, f"Empty config: {config}"
-    iso = ISO_CONFIG.read_text()
-    assert "image-template" not in iso and "bootc switch" not in iso, "ISO points at wrong payload"
+    iso = tomllib.loads(ISO_CONFIG.read_text())
+    kickstart = iso.get("customizations", {}).get("installer", {}).get("kickstart", {}).get("contents", "")
+    assert "image-template" not in kickstart and "bootc switch" not in kickstart, "ISO points at wrong payload"
     build = BUILD_WORKFLOW.read_text()
     disk = DISK_WORKFLOW.read_text()
     assert "config/variants.json" in build and "config/variants.json" in disk, "Workflows must share variants.json"
