@@ -2,18 +2,9 @@
 
 set -euo pipefail
 
-## Which image variant is being built. The Containerfile passes it as the TARGET_FLAVOR ARG:
-##   dx   -> desktop image (Steam from Flatpak, no handheld fan control)
-##   deck -> handheld / Game Mode image (keeps the base Steam client and fw-fanctrl)
-FLAVOR="${TARGET_FLAVOR:-dx}"
-case "${FLAVOR}" in
-    dx | deck) ;;
-    *)
-        echo "Unknown TARGET_FLAVOR='${FLAVOR}', expected one of: dx deck" >&2
-        exit 1
-        ;;
-esac
-echo "Building image variant: ${FLAVOR}"
+# Shared layer for BOTH final images. No variant-specific removal or session change
+# belongs here: this stage is built just once per CI run.
+echo "Building shared Bazzite Deck GNOME + CachyOS + DX layer"
 
 # Remove the given packages, skipping the ones this base image does not ship
 remove_if_installed() {
@@ -109,7 +100,6 @@ chmod 0600 "/lib/modules/${KERNEL_VERSION}/initramfs.img"
 # desktop image, but Bazzite-Deck launches the base's Steam client for Game Mode, so the
 # deck variant keeps it.
 remove_if_installed tailscale
-[ "${FLAVOR}" = "deck" ] || remove_if_installed steam
 
 ## Packages that were layered with rpm-ostree on the host
 # Repos (exact copies of the ones configured on the host)
@@ -165,17 +155,13 @@ dnf5 -y install \
 dnf5 -y install mesa-libGL-devel mesa-libEGL-devel mesa-libgbm-devel gstreamer1-plugins-base-devel \
     || echo "WARNING: GL/EGL/GBM/gstreamer-plugins-base headers not installed (mesa provider conflict)"
 
-# Packages removed from the base on the host. fw-fanctrl drives handheld/laptop fan
-# curves, so the deck variant keeps it.
+# Lutris is excluded from both products; Steam and fan control stay here.
+# The DX-only removals happen in flavor.sh AFTER this shared image is committed.
 remove_if_installed lutris
-[ "${FLAVOR}" = "deck" ] || remove_if_installed fw-fanctrl
 
-## The deck base is a gaming image: it does not carry the DX (developer experience) layer
-## that bazzite-dx-gnome ships. Install that layer on deck so this is a deck+DX image.
-## Only the package and repo blocks of bazzite-dx's 20-install-apps.sh are copied here:
-## its SDDM/Game Mode, autologin, tuned/powerstation and dx-groups changes are meant to
-## *undo* the deck session and would break the handheld experience we keep above.
-if [ "${FLAVOR}" = "deck" ]; then
+## The common base is Bazzite Deck, so add the DX developer toolchain once.
+## Do NOT disable Deck's Game Mode or session here: that belongs to the DX flavor.
+# Install DX packages once; Deck keeps them, desktop gets them too.
     dnf5 -y install \
         android-tools \
         bcc \
@@ -236,7 +222,6 @@ if [ "${FLAVOR}" = "deck" ]; then
     # Docker-in-Docker, as in bazzite-dx
     mkdir -p /etc/modules-load.d
     printf 'iptable_nat\n' >> /etc/modules-load.d/ip_tables.conf
-fi
 
 ## CLEAN UP
 # Clean up dnf cache to reduce image size
