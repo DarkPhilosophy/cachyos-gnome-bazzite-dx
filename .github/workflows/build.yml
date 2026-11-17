@@ -98,82 +98,85 @@ jobs:
           fi
           echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
 
-  common:
-    name: Build shared CachyOS + DX
+
+  build:
+    name: Build shared base, DX and Deck locally
     needs: check
-    if: needs.check.outputs.should_build == 'true' && github.event_name != 'pull_request'
+    if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       contents: read
       packages: write
+    env:
+      FINGERPRINT: ${{ needs.check.outputs.fingerprint }}
     outputs:
-      ref: ${{ steps.publish.outputs.ref }}
+      dx_ref: ${{ steps.push_dx.outputs.ref }}
+      dx_digest: ${{ steps.push_dx.outputs.digest }}
+      deck_ref: ${{ steps.push_deck.outputs.ref }}
+      deck_digest: ${{ steps.push_deck.outputs.digest }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
-      - name: Prepare BTRFS storage
+
+      - name: Prepare container storage
+        id: storage
         uses: ublue-os/container-storage-action@911baca08baf30c8654933e9e9723cb399892140
+        continue-on-error: true
         with:
           target-dir: /var/lib/containers
           mount-opts: compress-force=zstd:2
-      - name: Build the common image once
+
+      - name: Free space only if BTRFS is unavailable
+        if: steps.storage.outcome != 'success'
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
+        with:
+          remove-codeql: true
+
+      - name: Build shared CachyOS and DX foundation
+        id: common
+        shell: bash
         run: |
           set -euo pipefail
+          start=$SECONDS
           sudo podman build --layers --pull=newer \
             --build-arg "BASE_IMAGE=$COMMON_BASE" \
             --label "io.darkphilosophy.shared-stage=$GITHUB_SHA" \
-            -f Containerfile.common -t localhost/cachyos-bazzite-common:build .
-      - name: Push shared image for DX and Deck jobs
-        id: publish
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          : "${GH_TOKEN:?GITHUB_TOKEN required}"
-          ref="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cachyos-bazzite-common:ci-${GITHUB_SHA:0:12}"
-          printf '%s' "$GH_TOKEN" | sudo podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          sudo podman tag localhost/cachyos-bazzite-common:build "$ref"
-          sudo podman push "$ref"
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          echo "Shared image: $ref" >> "$GITHUB_STEP_SUMMARY"
+            -f Containerfile.common \
+            -t localhost/cachyos-bazzite-common:build .
+          sudo podman image exists localhost/cachyos-bazzite-common:build
+          echo "seconds=$((SECONDS-start))" >> "$GITHUB_OUTPUT"
 
-  dx:
-    name: Build and sign DX desktop
-    needs: [check, common]
-    if: needs.common.result == 'success'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      ref: ${{ steps.publish.outputs.ref }}
-      digest: ${{ steps.publish.outputs.digest }}
-    env:
-      FINGERPRINT: ${{ needs.check.outputs.fingerprint }}
-      COMMON_REF: ${{ needs.common.outputs.ref }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
-      - name: Prepare BTRFS storage
-        uses: ublue-os/container-storage-action@911baca08baf30c8654933e9e9723cb399892140
-        with:
-          target-dir: /var/lib/containers
-          mount-opts: compress-force=zstd:2
-      - name: Pull shared CachyOS base
+      - name: Build and test DX desktop
+        id: dx
+        run: |
+          start=$SECONDS
+          bash scripts/ci-build-flavor.sh dx
+          echo "seconds=$((SECONDS-start))" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test Deck Game Mode
+        id: deck
+        run: |
+          start=$SECONDS
+          bash scripts/ci-build-flavor.sh deck
+          echo "seconds=$((SECONDS-start))" >> "$GITHUB_OUTPUT"
+
+      # Podman runs as root; Cosign runs as the Actions user. They need their
+      # OWN registry credentials. This fixes UNAUTHORIZED from run 44119241712.
+      - name: Authenticate Podman and Cosign to GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           set -euo pipefail
           printf '%s' "$GH_TOKEN" | sudo podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          sudo podman pull "$COMMON_REF"
-          sudo podman tag "$COMMON_REF" localhost/cachyos-bazzite-common:build
-      - name: Build and verify DX desktop
-        run: bash scripts/ci-build-flavor.sh dx
-      - name: Publish DX candidate
-        id: publish
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push DX release candidate
+        id: push_dx
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: bash
         run: |
           set -euo pipefail
           image=$(jq -er '.[] | select(.flavor == "dx") | .image' config/variants.json)
@@ -187,54 +190,12 @@ jobs:
           [[ "$digest" == sha256:* ]]
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-        with:
-          cosign-release: v2.6.1
-      - name: Sign DX candidate
-        env:
-          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
-          REF: ${{ steps.publish.outputs.ref }}
-          DIGEST: ${{ steps.publish.outputs.digest }}
-        run: |
-          set -euo pipefail
-          test -n "$COSIGN_PRIVATE_KEY"
-          cosign sign -y --key env://COSIGN_PRIVATE_KEY "$REF@$DIGEST"
+          echo "DX candidate: $ref@$digest" >> "$GITHUB_STEP_SUMMARY"
 
-  deck:
-    name: Build and sign Deck + DX
-    needs: [check, common]
-    if: needs.common.result == 'success'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      ref: ${{ steps.publish.outputs.ref }}
-      digest: ${{ steps.publish.outputs.digest }}
-    env:
-      FINGERPRINT: ${{ needs.check.outputs.fingerprint }}
-      COMMON_REF: ${{ needs.common.outputs.ref }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
-      - name: Prepare BTRFS storage
-        uses: ublue-os/container-storage-action@911baca08baf30c8654933e9e9723cb399892140
-        with:
-          target-dir: /var/lib/containers
-          mount-opts: compress-force=zstd:2
-      - name: Pull shared CachyOS base
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$GH_TOKEN" | sudo podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          sudo podman pull "$COMMON_REF"
-          sudo podman tag "$COMMON_REF" localhost/cachyos-bazzite-common:build
-      - name: Build and verify Deck Game Mode
-        run: bash scripts/ci-build-flavor.sh deck
-      - name: Publish Deck candidate
-        id: publish
+      - name: Push Deck release candidate
+        id: push_deck
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: bash
         run: |
           set -euo pipefail
           image=$(jq -er '.[] | select(.flavor == "deck") | .image' config/variants.json)
@@ -248,119 +209,195 @@ jobs:
           [[ "$digest" == sha256:* ]]
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Deck candidate: $ref@$digest" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Install Cosign
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
           cosign-release: v2.6.1
-      - name: Sign Deck candidate
+
+      - name: Sign DX image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
-          REF: ${{ steps.publish.outputs.ref }}
-          DIGEST: ${{ steps.publish.outputs.digest }}
+          REF: ${{ steps.push_dx.outputs.ref }}
+          DIGEST: ${{ steps.push_dx.outputs.digest }}
+        shell: bash
         run: |
           set -euo pipefail
           test -n "$COSIGN_PRIVATE_KEY"
           cosign sign -y --key env://COSIGN_PRIVATE_KEY "$REF@$DIGEST"
 
-  release:
-    name: Publish signed DX and Deck
-    needs: [dx, deck]
-    if: needs.dx.result == 'success' && needs.deck.result == 'success'
+      - name: Sign Deck image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          REF: ${{ steps.push_deck.outputs.ref }}
+          DIGEST: ${{ steps.push_deck.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$COSIGN_PRIVATE_KEY"
+          cosign sign -y --key env://COSIGN_PRIVATE_KEY "$REF@$DIGEST"
+
+      - name: Build durations and results
+        if: always()
+        env:
+          COMMON: ${{ steps.common.outputs.seconds }}
+          DX: ${{ steps.dx.outputs.seconds }}
+          DECK: ${{ steps.deck.outputs.seconds }}
+          DX_REF: ${{ steps.push_dx.outputs.ref }}
+          DECK_REF: ${{ steps.push_deck.outputs.ref }}
+        run: |
+          {
+            echo '## CachyOS + Bazzite build report'
+            echo ''
+            echo '| Build stage | Duration in seconds |'
+            echo '| --- | ---: |'
+            echo "| Shared CachyOS foundation | ${COMMON:-not completed} |"
+            echo "| DX desktop | ${DX:-not completed} |"
+            echo "| Deck Game Mode | ${DECK:-not completed} |"
+            echo ''
+            echo "DX candidate: ${DX_REF:-not published}"
+            echo ''
+            echo "Deck candidate: ${DECK_REF:-not published}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verify_dx:
+    name: Verify DX signature
+    needs: [check, build]
+    if: github.event_name != 'pull_request' && needs.build.result == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    env:
+      REF: ${{ needs.build.outputs.dx_ref }}
+      DIGEST: ${{ needs.build.outputs.dx_digest }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout public signing key
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v2.6.1
+      - name: Verify DX manifest signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" == sha256:* ]]
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          cosign verify --key build_files/keys/cosign.pub "$REF@$DIGEST" > /dev/null
+          echo "Verified DX: $REF@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+  verify_deck:
+    name: Verify Deck signature
+    needs: [check, build]
+    if: github.event_name != 'pull_request' && needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    env:
+      REF: ${{ needs.build.outputs.deck_ref }}
+      DIGEST: ${{ needs.build.outputs.deck_digest }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout public signing key
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v2.6.1
+      - name: Verify Deck manifest signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" == sha256:* ]]
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          cosign verify --key build_files/keys/cosign.pub "$REF@$DIGEST" > /dev/null
+          echo "Verified Deck: $REF@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Publish verified DX and Deck
+    needs: [build, verify_dx, verify_deck]
+    if: needs.verify_dx.result == 'success' && needs.verify_deck.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
     env:
-      DX_REF: ${{ needs.dx.outputs.ref }}
-      DX_DIGEST: ${{ needs.dx.outputs.digest }}
-      DECK_REF: ${{ needs.deck.outputs.ref }}
-      DECK_DIGEST: ${{ needs.deck.outputs.digest }}
+      DX_REF: ${{ needs.build.outputs.dx_ref }}
+      DX_DIGEST: ${{ needs.build.outputs.dx_digest }}
+      DECK_REF: ${{ needs.build.outputs.deck_ref }}
+      DECK_DIGEST: ${{ needs.build.outputs.deck_digest }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Authenticate to GHCR
+      - name: Authenticate registry
+        shell: bash
         run: |
           set -euo pipefail
           printf '%s' "$GH_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-      - name: Promote signed DX manifest
+
+      - name: Promote DX latest
+        shell: bash
         run: |
           set -euo pipefail
           skopeo copy --all --preserve-digests "docker://$DX_REF@$DX_DIGEST" "docker://$DX_REF:latest"
           actual=$(skopeo inspect --raw "docker://$DX_REF:latest" | sha256sum | cut -d' ' -f1)
           [[ "sha256:$actual" == "$DX_DIGEST" ]]
-      - name: Promote signed Deck manifest
+
+      - name: Promote Deck latest
+        shell: bash
         run: |
           set -euo pipefail
           skopeo copy --all --preserve-digests "docker://$DECK_REF@$DECK_DIGEST" "docker://$DECK_REF:latest"
           actual=$(skopeo inspect --raw "docker://$DECK_REF:latest" | sha256sum | cut -d' ' -f1)
           [[ "sha256:$actual" == "$DECK_DIGEST" ]]
+
       - name: Publish summary
         run: |
           {
-            echo '## Published Bazzite images'
+            echo '## Published verified Bazzite images'
             echo ''
-            echo "| Flavor | Signed digest |"
+            echo "| Variant | Signed image |"
             echo "|---|---|"
-            echo "| DX | `$DX_REF@$DX_DIGEST` |"
-            echo "| Deck | `$DECK_REF@$DECK_DIGEST` |"
+            echo "| DX | \`$DX_REF@$DX_DIGEST\` |"
+            echo "| Deck | \`$DECK_REF@$DECK_DIGEST\` |"
           } >> "$GITHUB_STEP_SUMMARY"
-
-  pr_smoke:
-    name: Validate both images (PR only)
-    needs: check
-    if: github.event_name == 'pull_request' && needs.check.outputs.should_build == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    permissions:
-      contents: read
-    env:
-      FINGERPRINT: ${{ needs.check.outputs.fingerprint }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
-      - name: Prepare BTRFS storage
-        uses: ublue-os/container-storage-action@911baca08baf30c8654933e9e9723cb399892140
-        with:
-          target-dir: /var/lib/containers
-          mount-opts: compress-force=zstd:2
-      - name: Build shared base
-        run: |
-          sudo podman build --layers --pull=newer \
-            --build-arg "BASE_IMAGE=$COMMON_BASE" \
-            --label "io.darkphilosophy.shared-stage=$GITHUB_SHA" \
-            -f Containerfile.common -t localhost/cachyos-bazzite-common:build .
-      - name: Verify DX desktop
-        run: bash scripts/ci-build-flavor.sh dx
-      - name: Verify Deck Game Mode
-        run: bash scripts/ci-build-flavor.sh deck
 
   build_gate:
     name: Build and push image
-    needs: [check, common, dx, deck, release, pr_smoke]
+    needs: [check, build, verify_dx, verify_deck, release]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Verify required results
+      - name: Verify end-to-end workflow
         env:
           CHECK: ${{ needs.check.result }}
           REQUIRED: ${{ needs.check.outputs.should_build }}
-          COMMON: ${{ needs.common.result }}
-          DX: ${{ needs.dx.result }}
-          DECK: ${{ needs.deck.result }}
+          BUILD: ${{ needs.build.result }}
+          DX: ${{ needs.verify_dx.result }}
+          DECK: ${{ needs.verify_deck.result }}
           RELEASE: ${{ needs.release.result }}
-          PR: ${{ needs.pr_smoke.result }}
           EVENT: ${{ github.event_name }}
+        shell: bash
         run: |
           set -euo pipefail
-          test "$CHECK" = success
+          [[ "$CHECK" == success ]]
           if [[ "$REQUIRED" == false ]]; then
-            echo "No change to publish"; exit 0
+            [[ "$BUILD" == skipped ]]
+            exit 0
           fi
-          if [[ "$EVENT" == pull_request ]]; then
-            test "$PR" = success
-          else
-            test "$COMMON" = success
-            test "$DX" = success
-            test "$DECK" = success
-            test "$RELEASE" = success
+          [[ "$BUILD" == success ]]
+          if [[ "$EVENT" != pull_request ]]; then
+            [[ "$DX" == success ]]
+            [[ "$DECK" == success ]]
+            [[ "$RELEASE" == success ]]
           fi
