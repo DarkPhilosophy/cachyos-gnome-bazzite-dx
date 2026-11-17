@@ -34,7 +34,7 @@ def validate():
     build = BUILD_WORKFLOW.read_text()
     disk = DISK_WORKFLOW.read_text()
     assert "config/variants.json" in build and "config/variants.json" in disk, "Workflows must share variants.json"
-    assert "disk_config/iso.toml" in disk and "disk_config/disk.toml" in disk
+    assert "matrix.target.config" in disk, "Disk workflow must use matrix-selected config"
     assert "'./disk_config/" not in disk, "Invalid GitHub path filter prefix"
     assert 'image-template' not in (ROOT / "Justfile").read_text(), "Stale Justfile image name"
     return variants
