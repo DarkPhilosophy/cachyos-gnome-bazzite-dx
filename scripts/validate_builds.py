@@ -34,7 +34,9 @@ def validate():
     assert "BASE_IMAGE" in common and "/ctx/build.sh" in common, "Missing shared build stage"
     assert "COMMON_IMAGE" in final and "/ctx/flavor.sh" in final, "Missing thin flavor stage"
     assert "dnf5 -y install kernel-cachyos" in shared_build, "CachyOS kernel must be built in shared stage"
-    assert "dracut" in shared_build and "dracut" not in flavor_build, "initramfs must only be built once"
+    assert re.search(r"(?m)^\s*(?:/usr/bin/)?dracut\b", shared_build), "Shared stage must regenerate initramfs"
+    assert not re.search(r"(?m)^\s*(?:/usr/bin/)?dracut\b", flavor_build), "Only common stage may regenerate initramfs"
+    assert "COPY build_files /" not in common and "COPY build_files /" not in final, "Flavor changes must not invalidate common cache"
     assert "TARGET_FLAVOR" not in shared_build, "Shared stage must be flavor-agnostic"
     assert "TARGET_FLAVOR" in flavor_build and "deck)" in flavor_build and "dx)" in flavor_build
     assert "Containerfile.common" in BUILD_WORKFLOW.read_text(), "CI must build shared stage"
