@@ -1,6 +1,18 @@
 #!/bin/bash
 
-set -ouex pipefail
+set -euo pipefail
+
+# Shared layer for BOTH final images. No variant-specific removal or session change
+# belongs here: this stage is built just once per CI run.
+echo "Building shared Bazzite Deck GNOME + CachyOS + DX layer"
+
+# Remove the given packages, skipping the ones this base image does not ship
+remove_if_installed() {
+    local p
+    for p in "$@"; do
+        if rpm -q "$p" > /dev/null 2>&1; then dnf5 -y remove "$p"; fi
+    done
+}
 
 ### Install packages
 
@@ -84,10 +96,10 @@ export DRACUT_NO_XATTR=1
 /usr/bin/dracut --no-hostonly --kver "${KERNEL_VERSION}" --reproducible -v --add ostree -f "/lib/modules/${KERNEL_VERSION}/initramfs.img"
 chmod 0600 "/lib/modules/${KERNEL_VERSION}/initramfs.img"
 
-# Remove steam (Flatpak instead) and tailscale (replaced by NetBird)
-for p in steam tailscale; do
-    if rpm -q "$p" > /dev/null 2>&1; then dnf5 -y remove "$p"; fi
-done
+# tailscale is replaced by NetBird on every variant. Steam comes from Flatpak on the
+# desktop image, but Bazzite-Deck launches the base's Steam client for Game Mode, so the
+# deck variant keeps it.
+remove_if_installed tailscale
 
 ## Packages that were layered with rpm-ostree on the host
 # Repos (exact copies of the ones configured on the host)
@@ -95,7 +107,7 @@ cp /ctx/repos/*.repo /etc/yum.repos.d/
 cp /ctx/gpg/* /etc/pki/rpm-gpg/
 
 dnf5 -y install \
-    caddy certbot crowdsec crowdsec-firewall-bouncer-nftables fail2ban \
+    caddy certbot crowdsec crowdsec-firewall-bouncer-nftables fail2ban nodejs \
     dovecot postfix opendkim opendkim-tools mailx \
     earlyoom irqbalance preload powertop kdump-utils kexec-tools seatd \
     udisks2-btrfs udisks2-iscsi udisks2-lvm2 \
@@ -143,10 +155,73 @@ dnf5 -y install \
 dnf5 -y install mesa-libGL-devel mesa-libEGL-devel mesa-libgbm-devel gstreamer1-plugins-base-devel \
     || echo "WARNING: GL/EGL/GBM/gstreamer-plugins-base headers not installed (mesa provider conflict)"
 
-# Packages removed from the base on the host
-for p in lutris fw-fanctrl; do
-    if rpm -q "$p" > /dev/null 2>&1; then dnf5 -y remove "$p"; fi
-done
+# Lutris is excluded from both products; Steam and fan control stay here.
+# The DX-only removals happen in flavor.sh AFTER this shared image is committed.
+remove_if_installed lutris
+
+## The common base is Bazzite Deck, so add the DX developer toolchain once.
+## Do NOT disable Deck's Game Mode or session here: that belongs to the DX flavor.
+# Install DX packages once; Deck keeps them, desktop gets them too.
+    dnf5 -y install \
+        android-tools \
+        bcc \
+        bpftop \
+        bpftrace \
+        ccache \
+        flatpak-builder \
+        git-subtree \
+        google-noto-sans-fonts \
+        nicstat \
+        numactl \
+        podman-machine \
+        podman-tui \
+        python3-ramalama \
+        restic \
+        rclone \
+        sysprof \
+        tiptop \
+        usbmuxd \
+        waypipe \
+        zsh
+
+    dnf5 --setopt=install_weak_deps=False -y install \
+        rocm-hip \
+        rocm-opencl \
+        rocm-clinfo \
+        rocm-smi \
+        qemu \
+        libvirt \
+        qemu-kvm \
+        virt-manager \
+        edk2-ovmf \
+        guestfs-tools
+
+    # Prefer the ROCm OpenCL ICD over Mesa's
+    remove_if_installed mesa-libOpenCL
+
+    # config-manager comes from dnf5-plugins; the deck base may not carry it
+    dnf5 -y install dnf5-plugins
+
+    # Both repos are added disabled upstream and enabled only for these installs
+    dnf5 config-manager addrepo --from-repofile="https://packages.microsoft.com/yumrepos/vscode/config.repo"
+    dnf5 config-manager setopt vscode-yum.enabled=0
+    dnf5 -y install --enable-repo=vscode-yum code
+
+    dnf5 config-manager addrepo --from-repofile="https://download.docker.com/linux/fedora/docker-ce.repo"
+    dnf5 config-manager setopt docker-ce-stable.enabled=0
+    dnf5 -y install --enable-repo=docker-ce-stable \
+        containerd.io \
+        docker-buildx-plugin \
+        docker-ce \
+        docker-ce-cli \
+        docker-compose-plugin
+
+    systemctl enable docker.socket
+    systemctl enable podman.socket
+
+    # Docker-in-Docker, as in bazzite-dx
+    mkdir -p /etc/modules-load.d
+    printf 'iptable_nat\n' >> /etc/modules-load.d/ip_tables.conf
 
 ## CLEAN UP
 # Clean up dnf cache to reduce image size

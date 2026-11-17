@@ -1,0 +1,18 @@
+# Shared, expensive build stage: one Bazzite GNOME base, one CachyOS kernel and
+# one developer toolchain. Build this image ONCE, then derive both products from it.
+# Bazzite DX upstream itself uses the Deck base and removes Deck session features.
+ARG BASE_IMAGE="ghcr.io/ublue-os/bazzite-deck-gnome:stable"
+
+FROM scratch AS ctx
+COPY build_files/build.sh /build.sh
+COPY build_files/keys/ /keys/
+COPY build_files/gpg/ /gpg/
+COPY build_files/repos/ /repos/
+COPY build_files/units/ /units/
+
+FROM ${BASE_IMAGE}
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=tmpfs,dst=/tmp \
+    bash /ctx/build.sh
