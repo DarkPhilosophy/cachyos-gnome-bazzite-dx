@@ -13,8 +13,8 @@ on:
       - '.github/renovate.json5'
       - '.github/workflows/dependabot-automerge.yml'
   schedule:
-    # Weekly (Monday 04:17 UTC, off the :00/:05 rush). The check job below skips the
-    # build when neither the base image nor the CachyOS packages changed.
+    # Weekly (Monday 04:17 UTC, off the :00/:05 rush). The check job below skips a
+    # variant when neither its base image nor the CachyOS packages changed.
     - cron: '17 4 * * 1'
   push:
     branches:
@@ -29,12 +29,21 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_DESC: "My Customized Universal Blue Image"
   IMAGE_KEYWORDS: "bootc,ublue,universal-blue"
   IMAGE_LOGO_URL: "https://avatars.githubusercontent.com/u/120078124?s=200&v=4"  # Put your own image here for a fancy profile on https://artifacthub.io/!
-  IMAGE_NAME: "${{ github.event.repository.name }}"  # output image name, usually same as repo name
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
   DEFAULT_TAG: "latest"
+  # Every image this repo publishes, built in parallel by the `build` job below.
+  #   flavor: passed to the Containerfile as TARGET_FLAVOR, picks the per-flavor steps in build.sh
+  #   image:  GHCR package name; each variant owns its package, tags and signature
+  #   base:   upstream image the variant rebases into the CachyOS kernel
+  #   desc:   org.opencontainers.image.description
+  # Adding a variant is adding one entry here: nothing else in this workflow is per-image.
+  VARIANTS: |
+    [
+      {"flavor":"dx","image":"cachyos-gnome-bazzite-dx","base":"ghcr.io/ublue-os/bazzite-dx-gnome:stable","desc":"Bazzite-DX (GNOME) with the CachyOS kernel, settings and ksmd"},
+      {"flavor":"deck","image":"cachyos-gnome-bazzite-deck","base":"ghcr.io/ublue-os/bazzite-deck-gnome:stable","desc":"Bazzite-Deck (GNOME) with the CachyOS kernel, settings and ksmd"}
+    ]
 
 # A newer run on the same ref supersedes an older one instead of burning minutes twice
 concurrency:
@@ -42,7 +51,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ~15 s job that decides if a scheduled build is worth ~10 min and several GB of pulls
+  # ~20 s job that decides, per variant, if a scheduled build is worth ~10 min and several GB of pulls
   check:
     name: Check for upstream changes
     runs-on: ubuntu-24.04
@@ -51,69 +60,106 @@ jobs:
       contents: read
       packages: read
     outputs:
-      fingerprint: ${{ steps.fp.outputs.fingerprint }}
-      build: ${{ steps.decide.outputs.build }}
+      # JSON array of the variants to build, consumed as the `build` job's matrix
+      matrix: ${{ steps.decide.outputs.matrix }}
+      # JSON array of every variant's image name, consumed by `cleanup`
+      images: ${{ steps.decide.outputs.images }}
     steps:
-      - name: Fingerprint build inputs
+      - name: Fingerprint build inputs per variant
         id: fp
-        # Fail open: if Copr/ghcr is unreachable, fingerprint stays empty and Decide builds anyway
+        # Fail open: if Copr/ghcr is unreachable the file is missing and Decide builds everything
         continue-on-error: true
+        env:
+          VARIANTS: ${{ env.VARIANTS }}
         run: |
           set -euo pipefail
-          base=$(skopeo inspect --no-tags docker://ghcr.io/ublue-os/bazzite-dx-gnome:stable | jq -r .Digest)
           copr() {
             curl -fsS "https://copr.fedorainfracloud.org/api_3/package/?ownername=bieszczaders&projectname=$1&packagename=$2&with_latest_succeeded_build=true" \
               | jq -er .builds.latest_succeeded.id
           }
+          # Both CachyOS inputs are shared by every variant
           kernel=$(copr kernel-cachyos kernel-cachyos)
           settings=$(copr kernel-cachyos-addons cachyos-settings)
-          fp=$(printf '%s\n' "$base" "$kernel" "$settings" | sha256sum | cut -c1-32)
-          echo "base=$base kernel-build=$kernel settings-build=$settings fingerprint=$fp"
-          echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
+          out='[]'
+          count=$(jq 'length' <<<"${VARIANTS}")
+          for ((i = 0; i < count; i++)); do
+            item=$(jq -c ".[${i}]" <<<"${VARIANTS}")
+            base=$(jq -r '.base' <<<"${item}")
+            digest=$(skopeo inspect --no-tags "docker://${base}" | jq -r .Digest)
+            fingerprint=$(printf '%s\n' "${digest}" "${kernel}" "${settings}" | sha256sum | cut -c1-32)
+            echo "$(jq -r '.image' <<<"${item}"): base=${digest} kernel-build=${kernel} settings-build=${settings} fingerprint=${fingerprint}"
+            out=$(jq -c --argjson v "${item}" --arg d "${digest}" --arg f "${fingerprint}" '. + [$v + {base_digest: $d, fingerprint: $f}]' <<<"${out}")
+          done
+          printf '%s\n' "${out}" > "${RUNNER_TEMP}/variants.json"
 
-      - name: Decide
+      - name: Decide which variants to build
         id: decide
         env:
-          FP: ${{ steps.fp.outputs.fingerprint }}
+          VARIANTS: ${{ env.VARIANTS }}
           EVENT: ${{ github.event_name }}
+          OWNER: ${{ github.repository_owner }}
+          TOKEN: ${{ github.token }}
+          DEFAULT_TAG: ${{ env.DEFAULT_TAG }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" != "schedule" ] || [ -z "$FP" ]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"; echo "Event=$EVENT fingerprint='${FP}': building"; exit 0
+          src="${RUNNER_TEMP}/variants.json"
+          if [ ! -s "${src}" ]; then
+            echo "::warning::build-input fingerprint unavailable, building every variant"
+            printf '%s\n' "${VARIANTS}" | jq -c 'map(. + {fingerprint: ""})' > "${src}"
           fi
-          repo="ghcr.io/${GITHUB_REPOSITORY,,}:latest"
-          info=$(skopeo inspect --no-tags --creds "$GITHUB_ACTOR:${{ github.token }}" "docker://$repo" 2>/dev/null || true)
-          prev=$(jq -r '.Labels["io.darkphilosophy.build-inputs"] // ""' <<<"${info:-{\}}")
-          created=$(jq -r '.Created // ""' <<<"${info:-{\}}")
-          age_days=9999
-          [ -n "$created" ] && age_days=$(( ( $(date +%s) - $(date -d "$created" +%s) ) / 86400 ))
-          echo "previous=$prev current=$FP image-age-days=$age_days"
-          # Third-party repos (crowdsec, netbird, google-cloud, Sunshine, ...) are not fingerprinted,
-          # so never let the image get older than 14 days.
-          if [ "$prev" = "$FP" ] && [ "$age_days" -lt 14 ]; then
-            echo "build=false" >> "$GITHUB_OUTPUT"; echo "Inputs unchanged and image is ${age_days}d old: skipping build"
-          else
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          fi
+          matrix='[]'
+          count=$(jq 'length' "${src}")
+          for ((i = 0; i < count; i++)); do
+            v=$(jq -c ".[${i}]" "${src}")
+            image=$(jq -r '.image' <<<"${v}")
+            fp=$(jq -r '.fingerprint // ""' <<<"${v}")
+            build=true
+            age=9999
+            # Every event except the schedule builds every variant: PRs must be validated
+            if [ "${EVENT}" = "schedule" ] && [ -n "${fp}" ]; then
+              repo="ghcr.io/${OWNER,,}/${image}:${DEFAULT_TAG}"
+              info=$(skopeo inspect --no-tags --creds "${GITHUB_ACTOR}:${TOKEN}" "docker://${repo}" 2>/dev/null || true)
+              prev=$(jq -r '.Labels["io.darkphilosophy.build-inputs"] // ""' <<<"${info:-{\}}")
+              created=$(jq -r '.Created // ""' <<<"${info:-{\}}")
+              [ -n "${created}" ] && age=$(( ( $(date +%s) - $(date -d "$created" +%s) ) / 86400 ))
+              echo "${image}: previous=${prev} current=${fp} image-age-days=${age}"
+              # Third-party repos (crowdsec, netbird, google-cloud, Sunshine, ...) are not
+              # fingerprinted, so never let an image get older than 14 days.
+              if [ "${prev}" = "${fp}" ] && [ "${age}" -lt 14 ]; then build=false; fi
+            fi
+            if [ "${build}" = true ]; then
+              matrix=$(jq -c --argjson v "${v}" '. + [$v]' <<<"${matrix}")
+              echo "::notice::${image}: building"
+            else
+              echo "::notice::${image}: inputs unchanged and image is ${age}d old, skipping"
+            fi
+          done
+          printf 'matrix=%s\n' "$(jq -c . <<<"${matrix}")" >>"${GITHUB_OUTPUT}"
+          printf 'images=%s\n' "$(jq -c '[.[].image]' "${src}")" >>"${GITHUB_OUTPUT}"
 
-  build_push:
-    name: Build and push image
+  # One leg per variant; they run at the same time and never share a package or a tag
+  build:
+    name: Build and push image (${{ matrix.variant.flavor }})
     needs: check
-    if: needs.check.outputs.build == 'true'
+    if: needs.check.outputs.matrix != '[]' && needs.check.outputs.matrix != ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
       id-token: write
-
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(needs.check.outputs.matrix) }}
     steps:
       - name: Prepare environment
+        env:
+          VARIANT_IMAGE: ${{ matrix.variant.image }}
         run: |
           # Lowercase the image uri
-          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
-          echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
+          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> "${GITHUB_ENV}"
+          echo "IMAGE_NAME=${VARIANT_IMAGE,,}" >> "${GITHUB_ENV}"
 
       # These stage versions are pinned by https://github.com/renovatebot/renovate
       - name: Checkout
@@ -161,7 +207,7 @@ jobs:
           labels: |
             io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}/${{ github.sha }}/README.md
             org.opencontainers.image.created=${{ steps.date.outputs.date }}
-            org.opencontainers.image.description=${{ env.IMAGE_DESC }}
+            org.opencontainers.image.description=${{ matrix.variant.desc }}
             org.opencontainers.image.documentation=https://raw.githubusercontent.com/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}/${{ github.sha }}/README.md
             org.opencontainers.image.source=https://github.com/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}/blob/${{ github.sha }}/Containerfile
             org.opencontainers.image.title=${{ env.IMAGE_NAME }}
@@ -174,7 +220,7 @@ jobs:
             io.artifacthub.package.logo-url=${{ env.IMAGE_LOGO_URL }}
             io.artifacthub.package.prerelease=false
             containers.bootc=1
-            io.darkphilosophy.build-inputs=${{ needs.check.outputs.fingerprint }}
+            io.darkphilosophy.build-inputs=${{ matrix.variant.fingerprint }}
           sep-tags: " "
           sep-annotations: " "
 
@@ -184,11 +230,13 @@ jobs:
         with:
           containerfiles: |
             ./Containerfile
-          # Postfix image name with -custom to make it a little more descriptive
-          # Syntax: https://docs.github.com/en/actions/learn-github-actions/expressions#format
+          # The variant decides the base image and the per-flavor steps in build.sh
           image: ${{ env.IMAGE_NAME }}
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            BASE_IMAGE=${{ matrix.variant.base }}
+            TARGET_FLAVOR=${{ matrix.variant.flavor }}
           oci: false
 
       # Rechunk is a script that we use on Universal Blue to make sure there isnt a single huge layer when your image gets published.
@@ -253,6 +301,7 @@ jobs:
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         run: |
           # One signature on the digest covers every tag; signing each tag re-signs the same manifest
+          # Each variant signs its own digest with the same key, under its own package
           IMAGE_FULL="${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}"
           [ -n "$DIGEST" ] || { echo "push step returned no digest" >&2; exit 1; }
           cosign sign -y --key env://COSIGN_PRIVATE_KEY "$IMAGE_FULL@$DIGEST"
@@ -261,20 +310,54 @@ jobs:
           COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
 
+  # Branch protection requires the check named "Build and push image". A matrix job is
+  # reported per leg ("Build and push image (dx)"), so this gate keeps that exact name and
+  # fails whenever any variant's leg did not succeed.
+  build_gate:
+    name: Build and push image
+    needs:
+      - check
+      - build
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every variant to be built
+        env:
+          CHECK_RESULT: ${{ needs.check.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          echo "check=${CHECK_RESULT} build=${BUILD_RESULT}"
+          case "${CHECK_RESULT}" in
+            success) ;;
+            *) echo "::error::upstream change check did not succeed"; exit 1 ;;
+          esac
+          # skipped means every variant was up to date, which is a pass
+          case "${BUILD_RESULT}" in
+            success | skipped) ;;
+            *) echo "::error::one or more variants failed to build"; exit 1 ;;
+          esac
+
   # Keeps the registry small: drops untagged leftovers of earlier builds.
   # Tagged versions (images and their .sig signatures) are never touched.
   cleanup:
     name: Prune old untagged image versions
-    needs: build_push
-    if: needs.build_push.result == 'success' && github.event_name != 'pull_request'
+    needs:
+      - check
+      - build_gate
+    if: needs.build_gate.result == 'success' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.check.outputs.images) }}
     steps:
       - uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5.0.0
         with:
-          package-name: ${{ github.event.repository.name }}
+          package-name: ${{ matrix.image }}
           package-type: container
           min-versions-to-keep: 10
           delete-only-untagged-versions: true

@@ -1,9 +1,16 @@
+# Base image this build rebases. Every variant of the image is the same build with a
+# different base, so the workflow passes this per variant:
+#   dx   -> ghcr.io/ublue-os/bazzite-dx-gnome:stable    (desktop)
+#   deck -> ghcr.io/ublue-os/bazzite-deck-gnome:stable  (handheld / Game Mode)
+# It must stay before the first FROM: only a global ARG can be used in FROM lines.
+ARG BASE_IMAGE="ghcr.io/ublue-os/bazzite-dx-gnome:stable"
+
 # Allow build scripts to be referenced without being copied into the final image
 FROM scratch AS ctx
 COPY build_files /
 
 # Base Image
-FROM ghcr.io/ublue-os/bazzite-dx-gnome:stable
+FROM ${BASE_IMAGE}
 
 ## Other possible base images include:
 # FROM ghcr.io/ublue-os/bazzite:latest
@@ -28,6 +35,10 @@ FROM ghcr.io/ublue-os/bazzite-dx-gnome:stable
 ### MODIFICATIONS
 ## make modifications desired in your image and install packages by modifying the build.sh script
 ## the following RUN directive does all the things required to run "build.sh" as recommended.
+
+## Which variant is being built; build.sh reads it from the environment to pick the
+## per-flavor steps (dx = desktop, deck = handheld/Game Mode).
+ARG TARGET_FLAVOR="dx"
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \

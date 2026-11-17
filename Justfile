@@ -1,6 +1,8 @@
 export image_name := env("IMAGE_NAME", "image-template") # output image name, usually same as repo name, change as needed
 export default_tag := env("DEFAULT_TAG", "latest")
 export bib_image := env("BIB_IMAGE", "quay.io/centos-bootc/bootc-image-builder:latest")
+export base_image := env("BASE_IMAGE", "ghcr.io/ublue-os/bazzite-dx-gnome:stable") # base this build rebases (deck: ghcr.io/ublue-os/bazzite-deck-gnome:stable)
+export target_flavor := env("TARGET_FLAVOR", "dx") # dx (desktop) or deck (handheld / Game Mode)
 
 alias build-vm := build-qcow2
 alias rebuild-vm := rebuild-qcow2
@@ -96,6 +98,8 @@ build $target_image=image_name $tag=default_tag:
 
     podman build \
         "${BUILD_ARGS[@]}" \
+        --build-arg "BASE_IMAGE={{ base_image }}" \
+        --build-arg "TARGET_FLAVOR={{ target_flavor }}" \
         --pull=newer \
         --tag "${target_image}:${tag}" \
         .

@@ -1,6 +1,27 @@
 #!/bin/bash
 
-set -ouex pipefail
+set -euo pipefail
+
+## Which image variant is being built. The Containerfile passes it as the TARGET_FLAVOR ARG:
+##   dx   -> desktop image (Steam from Flatpak, no handheld fan control)
+##   deck -> handheld / Game Mode image (keeps the base Steam client and fw-fanctrl)
+FLAVOR="${TARGET_FLAVOR:-dx}"
+case "${FLAVOR}" in
+    dx | deck) ;;
+    *)
+        echo "Unknown TARGET_FLAVOR='${FLAVOR}', expected one of: dx deck" >&2
+        exit 1
+        ;;
+esac
+echo "Building image variant: ${FLAVOR}"
+
+# Remove the given packages, skipping the ones this base image does not ship
+remove_if_installed() {
+    local p
+    for p in "$@"; do
+        if rpm -q "$p" > /dev/null 2>&1; then dnf5 -y remove "$p"; fi
+    done
+}
 
 ### Install packages
 
@@ -84,10 +105,11 @@ export DRACUT_NO_XATTR=1
 /usr/bin/dracut --no-hostonly --kver "${KERNEL_VERSION}" --reproducible -v --add ostree -f "/lib/modules/${KERNEL_VERSION}/initramfs.img"
 chmod 0600 "/lib/modules/${KERNEL_VERSION}/initramfs.img"
 
-# Remove steam (Flatpak instead) and tailscale (replaced by NetBird)
-for p in steam tailscale; do
-    if rpm -q "$p" > /dev/null 2>&1; then dnf5 -y remove "$p"; fi
-done
+# tailscale is replaced by NetBird on every variant. Steam comes from Flatpak on the
+# desktop image, but Bazzite-Deck launches the base's Steam client for Game Mode, so the
+# deck variant keeps it.
+remove_if_installed tailscale
+[ "${FLAVOR}" = "deck" ] || remove_if_installed steam
 
 ## Packages that were layered with rpm-ostree on the host
 # Repos (exact copies of the ones configured on the host)
@@ -143,10 +165,10 @@ dnf5 -y install \
 dnf5 -y install mesa-libGL-devel mesa-libEGL-devel mesa-libgbm-devel gstreamer1-plugins-base-devel \
     || echo "WARNING: GL/EGL/GBM/gstreamer-plugins-base headers not installed (mesa provider conflict)"
 
-# Packages removed from the base on the host
-for p in lutris fw-fanctrl; do
-    if rpm -q "$p" > /dev/null 2>&1; then dnf5 -y remove "$p"; fi
-done
+# Packages removed from the base on the host. fw-fanctrl drives handheld/laptop fan
+# curves, so the deck variant keeps it.
+remove_if_installed lutris
+[ "${FLAVOR}" = "deck" ] || remove_if_installed fw-fanctrl
 
 ## CLEAN UP
 # Clean up dnf cache to reduce image size
