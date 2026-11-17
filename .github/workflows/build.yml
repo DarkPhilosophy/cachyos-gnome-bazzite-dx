@@ -138,6 +138,7 @@ jobs:
           # no second CachyOS kernel or initramfs generation.
           sudo podman build --layers --pull=newer \
             --build-arg "BASE_IMAGE=$COMMON_BASE" \
+            --label "io.darkphilosophy.shared-stage=$GITHUB_SHA" \
             -f Containerfile.common \
             -t localhost/cachyos-bazzite-common:build .
           common_id=$(sudo podman image inspect localhost/cachyos-bazzite-common:build --format '{{.Id}}')
@@ -158,6 +159,123 @@ jobs:
               -f Containerfile -t "localhost/$image:build" .
             sudo podman image exists "localhost/$image:build"
             echo "::endgroup::"
+          done < <(jq -r '.[] | [.flavor,.image] | @tsv' config/variants.json)
+
+      - name: Verify both products inherit the same validated common image
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Build-time assertions are intentionally before *any* registry push.
+          inherited_label() {
+            sudo podman image inspect "$1" | jq -er '.[0].Labels["io.darkphilosophy.shared-stage"]'
+          }
+          expected=$(inherited_label localhost/cachyos-bazzite-common:build)
+          [[ "$expected" == "$GITHUB_SHA" ]]
+          while IFS=
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          printf '%s' "$TOKEN" | sudo podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push both verified products
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        id: push
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > digests.tsv
+          today=$(date -u +%Y%m%d)
+          while IFS=$'\t' read -r flavor image; do
+            ref="ghcr.io/${OWNER,,}/$image"
+            sudo podman tag "localhost/$image:build" "$ref:$today"
+            digest_file=$(mktemp)
+            sudo podman push --digestfile "$digest_file" "$ref:$today"
+            digest=$(cat "$digest_file")
+            rm -f "$digest_file"
+            [[ "$digest" == sha256:* ]]
+            printf '%s\t%s\n' "$ref" "$digest" >> digests.tsv
+            echo "Pushed immutable date tag $ref:$today => $digest"
+          done < <(jq -r '.[] | [.flavor,.image] | @tsv' config/variants.json)
+
+      - name: Setup Cosign
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v2.6.1
+
+      - name: Sign BOTH image digests before advancing latest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$COSIGN_PRIVATE_KEY"
+          while IFS=$'\t' read -r ref digest; do
+            cosign sign -y --key env://COSIGN_PRIVATE_KEY "$ref@$digest"
+            echo "Signed $ref@$digest"
+          done < digests.tsv
+
+      - name: Promote signed images to latest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The two packages are independently tagged, but neither is moved
+          # to latest until BOTH builds and BOTH digest signatures pass.
+          while IFS=$'\t' read -r ref digest; do
+            sudo podman tag "localhost/${ref##*/}:build" "$ref:latest"
+            sudo podman push "$ref:latest"
+            echo "Promoted signed $ref@$digest to latest"
+          done < digests.tsv
+
+  build_gate:
+    name: Build and push image
+    needs: [check, build]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require shared pipeline success or legitimate up-to-date skip
+        env:
+          CHECK_RESULT: ${{ needs.check.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          SHOULD_BUILD: ${{ needs.check.outputs.should_build }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CHECK_RESULT" == success ]] || { echo "Input check failed"; exit 1; }
+          if [[ "$SHOULD_BUILD" == false ]]; then
+            [[ "$BUILD_RESULT" == skipped ]] || exit 1
+          else
+            [[ "$BUILD_RESULT" == success ]] || { echo "One or both flavors failed"; exit 1; }
+          fi
+\t' read -r flavor image; do
+            ref="localhost/$image:build"
+            [[ "$(inherited_label "$ref")" == "$expected" ]] || {
+              echo "::error::$image does not inherit this run's shared stage"; exit 1;
+            }
+            sudo podman run --rm --entrypoint /usr/bin/bash "$ref" -euo pipefail -c '
+              rpm -q kernel-cachyos >/dev/null
+              test -d /usr/share/gamescope-session-plus
+              test -f /etc/pki/containers/darkphilosophy.pub
+              test -e /usr/lib/systemd/system/ksmd.service
+            '
+            if [[ "$flavor" == dx ]]; then
+              sudo podman run --rm --entrypoint /usr/bin/bash "$ref" -euo pipefail -c '
+                ! rpm -q steam >/dev/null 2>&1
+                ! rpm -q sddm >/dev/null 2>&1
+                rpm -q gdm >/dev/null
+              '
+            else
+              sudo podman run --rm --entrypoint /usr/bin/bash "$ref" -euo pipefail -c '
+                rpm -q steam >/dev/null
+                test -d /usr/share/gamescope-session-plus
+              '
+            fi
+            echo "Verified $flavor: identical shared-stage label and expected runtime components"
           done < <(jq -r '.[] | [.flavor,.image] | @tsv' config/variants.json)
 
       - name: Login to GHCR
