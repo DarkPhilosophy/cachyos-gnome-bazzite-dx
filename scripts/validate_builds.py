@@ -25,6 +25,20 @@ def validate():
         assert set(v) == {"flavor", "image", "base", "desc"}, "Variant schema changed"
         assert re.fullmatch(r"[a-z0-9][a-z0-9-]*", v["image"]), "Invalid image package name"
         assert v["base"].startswith("ghcr.io/ublue-os/bazzite-"), "Unexpected base image"
+    bases = {v["base"] for v in variants}
+    assert bases == {"ghcr.io/ublue-os/bazzite-deck-gnome:stable"}, "DX and Deck must share the SAME upstream base"
+    common = (ROOT / "Containerfile.common").read_text()
+    final = (ROOT / "Containerfile").read_text()
+    shared_build = (ROOT / "build_files/build.sh").read_text()
+    flavor_build = (ROOT / "build_files/flavor.sh").read_text()
+    assert "BASE_IMAGE" in common and "/ctx/build.sh" in common, "Missing shared build stage"
+    assert "COMMON_IMAGE" in final and "/ctx/flavor.sh" in final, "Missing thin flavor stage"
+    assert "dnf5 -y install kernel-cachyos" in shared_build, "CachyOS kernel must be built in shared stage"
+    assert "dracut" in shared_build and "dracut" not in flavor_build, "initramfs must only be built once"
+    assert "TARGET_FLAVOR" not in shared_build, "Shared stage must be flavor-agnostic"
+    assert "TARGET_FLAVOR" in flavor_build and "deck)" in flavor_build and "dx)" in flavor_build
+    assert "Containerfile.common" in BUILD_WORKFLOW.read_text(), "CI must build shared stage"
+    assert "matrix.variant" not in BUILD_WORKFLOW.read_text(), "CI must not build variants in separate runners"
     for config in (DISK_CONFIG, ISO_CONFIG):
         assert config.is_file(), f"Missing builder config: {config}"
         parsed = tomllib.loads(config.read_text())
