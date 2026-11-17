@@ -170,6 +170,74 @@ dnf5 -y install mesa-libGL-devel mesa-libEGL-devel mesa-libgbm-devel gstreamer1-
 remove_if_installed lutris
 [ "${FLAVOR}" = "deck" ] || remove_if_installed fw-fanctrl
 
+## The deck base is a gaming image: it does not carry the DX (developer experience) layer
+## that bazzite-dx-gnome ships. Install that layer on deck so this is a deck+DX image.
+## Only the package and repo blocks of bazzite-dx's 20-install-apps.sh are copied here:
+## its SDDM/Game Mode, autologin, tuned/powerstation and dx-groups changes are meant to
+## *undo* the deck session and would break the handheld experience we keep above.
+if [ "${FLAVOR}" = "deck" ]; then
+    dnf5 -y install \
+        android-tools \
+        bcc \
+        bpftop \
+        bpftrace \
+        ccache \
+        flatpak-builder \
+        git-subtree \
+        google-noto-sans-fonts \
+        nicstat \
+        numactl \
+        podman-machine \
+        podman-tui \
+        python3-ramalama \
+        restic \
+        rclone \
+        sysprof \
+        tiptop \
+        usbmuxd \
+        waypipe \
+        zsh
+
+    dnf5 --setopt=install_weak_deps=False -y install \
+        rocm-hip \
+        rocm-opencl \
+        rocm-clinfo \
+        rocm-smi \
+        qemu \
+        libvirt \
+        qemu-kvm \
+        virt-manager \
+        edk2-ovmf \
+        guestfs-tools
+
+    # Prefer the ROCm OpenCL ICD over Mesa's
+    remove_if_installed mesa-libOpenCL
+
+    # config-manager comes from dnf5-plugins; the deck base may not carry it
+    dnf5 -y install dnf5-plugins
+
+    # Both repos are added disabled upstream and enabled only for these installs
+    dnf5 config-manager addrepo --from-repofile="https://packages.microsoft.com/yumrepos/vscode/config.repo"
+    dnf5 config-manager setopt vscode-yum.enabled=0
+    dnf5 -y install --enable-repo=vscode-yum code
+
+    dnf5 config-manager addrepo --from-repofile="https://download.docker.com/linux/fedora/docker-ce.repo"
+    dnf5 config-manager setopt docker-ce-stable.enabled=0
+    dnf5 -y install --enable-repo=docker-ce-stable \
+        containerd.io \
+        docker-buildx-plugin \
+        docker-ce \
+        docker-ce-cli \
+        docker-compose-plugin
+
+    systemctl enable docker.socket
+    systemctl enable podman.socket
+
+    # Docker-in-Docker, as in bazzite-dx
+    mkdir -p /etc/modules-load.d
+    printf 'iptable_nat\n' >> /etc/modules-load.d/ip_tables.conf
+fi
+
 ## CLEAN UP
 # Clean up dnf cache to reduce image size
 dnf5 -y clean all

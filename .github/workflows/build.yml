@@ -42,7 +42,7 @@ env:
   VARIANTS: |
     [
       {"flavor":"dx","image":"cachyos-gnome-bazzite-dx","base":"ghcr.io/ublue-os/bazzite-dx-gnome:stable","desc":"Bazzite-DX (GNOME) with the CachyOS kernel, settings and ksmd"},
-      {"flavor":"deck","image":"cachyos-gnome-bazzite-deck","base":"ghcr.io/ublue-os/bazzite-deck-gnome:stable","desc":"Bazzite-Deck (GNOME) with the CachyOS kernel, settings and ksmd"}
+      {"flavor":"deck","image":"cachyos-gnome-bazzite-deck","base":"ghcr.io/ublue-os/bazzite-deck-gnome:stable","desc":"Bazzite-Deck + DX toolchain (GNOME) with the CachyOS kernel, settings and ksmd"}
     ]
 
 # A newer run on the same ref supersedes an older one instead of burning minutes twice

@@ -7,7 +7,7 @@ Two variants are built from the same recipe, in parallel:
 | Variant | Image | Base | Use |
 |---|---|---|---|
 | `dx` | `ghcr.io/darkphilosophy/cachyos-gnome-bazzite-dx` | [bazzite-dx-gnome](https://github.com/ublue-os/bazzite) | desktop |
-| `deck` | `ghcr.io/darkphilosophy/cachyos-gnome-bazzite-deck` | [bazzite-deck-gnome](https://github.com/ublue-os/bazzite) | handhelds / Game Mode |
+| `deck` | `ghcr.io/darkphilosophy/cachyos-gnome-bazzite-deck` | [bazzite-deck-gnome](https://github.com/ublue-os/bazzite) | handhelds / Game Mode, with the DX toolchain |
 
 Modifications:
 - Replaced kernel with [CachyOS Kernel](https://copr.fedorainfracloud.org/coprs/bieszczaders/kernel-cachyos/)
@@ -16,6 +16,9 @@ Modifications:
   Steam client because Game Mode launches it)
 - Removed tailscale (replaced by NetBird) and lutris; `dx` also drops fw-fanctrl, which the
   `deck` image keeps for its fan curves
+- Added the [bazzite-dx](https://github.com/ublue-os/bazzite-dx) developer toolchain to the
+  `deck` image too (dev tools, ROCm, virtualization, VS Code and Docker), without the
+  upstream changes that disable the deck session and Game Mode
 
 Derived from [sihawken/cachyos-kernel-bazzite-dx](https://github.com/sihawken/cachyos-kernel-bazzite-dx) (Apache-2.0).
 
