@@ -4,7 +4,11 @@
 ARG BASE_IMAGE="ghcr.io/ublue-os/bazzite-deck-gnome:stable"
 
 FROM scratch AS ctx
-COPY build_files /
+COPY build_files/build.sh /build.sh
+COPY build_files/keys/ /keys/
+COPY build_files/gpg/ /gpg/
+COPY build_files/repos/ /repos/
+COPY build_files/units/ /units/
 
 FROM ${BASE_IMAGE}
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
