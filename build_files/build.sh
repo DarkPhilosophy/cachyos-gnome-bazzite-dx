@@ -117,7 +117,7 @@ cp /ctx/repos/*.repo /etc/yum.repos.d/
 cp /ctx/gpg/* /etc/pki/rpm-gpg/
 
 dnf5 -y install \
-    caddy certbot crowdsec crowdsec-firewall-bouncer-nftables fail2ban \
+    caddy certbot crowdsec crowdsec-firewall-bouncer-nftables fail2ban nodejs \
     dovecot postfix opendkim opendkim-tools mailx \
     earlyoom irqbalance preload powertop kdump-utils kexec-tools seatd \
     udisks2-btrfs udisks2-iscsi udisks2-lvm2 \
