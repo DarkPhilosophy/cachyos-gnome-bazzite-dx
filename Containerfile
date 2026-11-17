@@ -2,7 +2,7 @@
 # Containerfile.common, never an independently rebuilt upstream distribution.
 ARG COMMON_IMAGE="localhost/cachyos-bazzite-common:build"
 FROM scratch AS ctx
-COPY build_files /
+COPY build_files/flavor.sh /flavor.sh
 
 FROM ${COMMON_IMAGE}
 ARG TARGET_FLAVOR="dx"
