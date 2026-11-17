@@ -1,0 +1,14 @@
+# Anaconda installs the container image supplied by the builder. Do not run
+# bootc switch in %post: that used to replace the target with image-template.
+# Keep essential Anaconda modules enabled for network, users and time zone.
+[customizations.installer.modules]
+enable = [
+  "org.fedoraproject.Anaconda.Modules.Storage",
+  "org.fedoraproject.Anaconda.Modules.Runtime",
+  "org.fedoraproject.Anaconda.Modules.Network",
+  "org.fedoraproject.Anaconda.Modules.Security",
+  "org.fedoraproject.Anaconda.Modules.Services",
+  "org.fedoraproject.Anaconda.Modules.Users",
+  "org.fedoraproject.Anaconda.Modules.Timezone"
+]
+disable = ["org.fedoraproject.Anaconda.Modules.Subscription"]
