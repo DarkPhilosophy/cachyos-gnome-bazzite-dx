@@ -220,6 +220,9 @@ remove_if_installed lutris fw-fanctrl
         docker-ce-cli \
         docker-compose-plugin
 
+    # Provision the socket group on existing booted systems as well as fresh installs.
+    install -d /usr/lib/sysusers.d
+    printf 'g docker - -\n' > /usr/lib/sysusers.d/docker.conf
     systemctl enable docker.socket
     systemctl enable podman.socket
 

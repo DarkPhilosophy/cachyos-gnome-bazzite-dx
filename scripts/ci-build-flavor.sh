@@ -34,6 +34,7 @@ sudo podman run --rm --entrypoint /usr/bin/bash "$target" -euo pipefail -c '
   ! rpm -q fw-fanctrl >/dev/null 2>&1 || exit 1
   test -f /etc/pki/containers/darkphilosophy.pub
   test -e /usr/lib/systemd/system/ksmd.service
+  systemd-sysusers --cat-config docker.conf | grep -Fx "g docker - -" >/dev/null
 '
 if [[ "$flavor" == "dx" ]]; then
   sudo podman run --rm --entrypoint /usr/bin/bash "$target" -euo pipefail -c '
