@@ -22,16 +22,11 @@ case "${TARGET_FLAVOR:-}" in
         done
         rm -f /usr/share/gamescope-session-plus/bootstrap_steam.tar.gz
         # Remove only packages present; same semantics as previous DX build.
-        for package in steam fw-fanctrl steamos-manager-powerstation sddm; do
+        for package in steam steamos-manager-powerstation sddm; do
             if rpm -q "$package" >/dev/null 2>&1; then dnf5 -y remove "$package"; fi
         done
         # Restore the desktop display manager and tuned, as upstream DX does.
-        if rpm -q gdm >/dev/null 2>&1; then
-            systemctl enable gdm.service
-        else
-            dnf5 -y install gdm
-            systemctl enable gdm.service
-        fi
+        systemctl enable gdm.service
         systemctl mask powerstation.service || true
         if systemctl list-unit-files tuned.service --no-legend | grep -q tuned.service; then
             systemctl enable tuned.service

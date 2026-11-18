@@ -14,8 +14,7 @@ Modifications:
 - [CachyOS settings + ksmd](https://copr.fedorainfracloud.org/coprs/bieszczaders/kernel-cachyos-addons/)
 - Removed steam in favour of flatpak steam (`dx` only: the `deck` image keeps the base's
   Steam client because Game Mode launches it)
-- Removed tailscale (replaced by NetBird) and lutris; `dx` also drops fw-fanctrl, which the
-  `deck` image keeps for its fan curves
+- Removed tailscale (replaced by NetBird) and fw-fanctrl from both images
 - Added the [bazzite-dx](https://github.com/ublue-os/bazzite-dx) developer toolchain to the
   `deck` image too (dev tools, ROCm, virtualization, VS Code and Docker), without the
   upstream changes that disable the deck session and Game Mode
@@ -35,6 +34,18 @@ systemctl reboot
 rpm-ostree rebase ostree-image-signed:docker://${IMAGE}:latest
 systemctl reboot
 ```
+
+### Rebase fails because a package to remove is not installed
+
+List the removal overrides on the default deployment:
+
+```sh
+rpm-ostree status --json | jq -r '.deployments[0]["requested-base-removals"][]?'
+```
+
+Pass the obsolete override names to `rpm-ostree override reset` in one
+transaction. Preview with `--dry-run`, then run without it and retry the
+rebase before rebooting. Do not use `--all`: it also clears unrelated overrides.
 
 Customize expensive shared operations in `build_files/build.sh`, and small product differences
 in `build_files/flavor.sh`. `Containerfile.common` builds CachyOS, initramfs and DX packages

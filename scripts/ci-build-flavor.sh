@@ -30,7 +30,8 @@ if [[ "$shared_rev" != "$GITHUB_SHA" ]]; then
   exit 1
 fi
 sudo podman run --rm --entrypoint /usr/bin/bash "$target" -euo pipefail -c '
-  rpm -q kernel-cachyos >/dev/null
+  rpm -q kernel-cachyos ublue-setup-services >/dev/null
+  ! rpm -q fw-fanctrl >/dev/null 2>&1 || exit 1
   test -f /etc/pki/containers/darkphilosophy.pub
   test -e /usr/lib/systemd/system/ksmd.service
 '

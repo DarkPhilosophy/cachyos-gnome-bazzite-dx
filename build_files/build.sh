@@ -155,9 +155,8 @@ dnf5 -y install \
 dnf5 -y install mesa-libGL-devel mesa-libEGL-devel mesa-libgbm-devel gstreamer1-plugins-base-devel \
     || echo "WARNING: GL/EGL/GBM/gstreamer-plugins-base headers not installed (mesa provider conflict)"
 
-# Lutris is excluded from both products; Steam and fan control stay here.
-# The DX-only removals happen in flavor.sh AFTER this shared image is committed.
-remove_if_installed lutris
+# Exclude unwanted RPMs in the image rather than via client-side overrides.
+remove_if_installed lutris fw-fanctrl
 
 ## The common base is Bazzite Deck, so add the DX developer toolchain once.
 ## Do NOT disable Deck's Game Mode or session here: that belongs to the DX flavor.
@@ -169,6 +168,7 @@ remove_if_installed lutris
         bpftrace \
         ccache \
         flatpak-builder \
+        gdm \
         git-subtree \
         google-noto-sans-fonts \
         nicstat \
@@ -198,6 +198,10 @@ remove_if_installed lutris
 
     # Prefer the ROCm OpenCL ICD over Mesa's
     remove_if_installed mesa-libOpenCL
+
+    # Match upstream DX: bake the setup RPM in rather than requiring a client layer.
+    dnf5 -y install --enable-repo="copr:copr.fedorainfracloud.org:ublue-os:packages" \
+        ublue-setup-services
 
     # config-manager comes from dnf5-plugins; the deck base may not carry it
     dnf5 -y install dnf5-plugins
